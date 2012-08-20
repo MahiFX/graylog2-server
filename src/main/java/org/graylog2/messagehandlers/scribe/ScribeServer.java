@@ -1,32 +1,12 @@
-/**
- * Copyright 2011 Rackspace Hosting Inc.
- *
- * This file is part of Graylog2.
- *
- * Graylog2 is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * Graylog2 is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with Graylog2.  If not, see <http://www.gnu.org/licenses/>.
- *
- */
-
 package org.graylog2.messagehandlers.scribe;
 
 import org.apache.log4j.Logger;
 import scribe.thrift.scribe;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.protocol.TProtocolFactory;
-import org.apache.thrift.server.TThreadPoolServer;
+import org.apache.thrift.server.THsHaServer;
 import org.apache.thrift.transport.TFramedTransport;
-import org.apache.thrift.transport.TServerSocket;
+import org.apache.thrift.transport.TNonblockingServerSocket;
 import org.apache.thrift.transport.TTransportException;
 import org.apache.thrift.transport.TTransportFactory;
 
@@ -44,7 +24,7 @@ public final class ScribeServer implements Runnable {
     private static final Logger LOG = Logger.getLogger(ScribeServer.class);
     
 
-    TServerSocket server;
+    TNonblockingServerSocket server;
     private String host = "localhost";
     private int port = 5672;
     private ScribeHandler handler;
@@ -65,13 +45,12 @@ public final class ScribeServer implements Runnable {
     
     @Override
     public void run() {
-        
         LOG.info("Starting Scribe server on port :" + String.valueOf( this.port) );
         
         scribe.Processor processor = new scribe.Processor(handler);
         
         try {
-            server = new TServerSocket(new InetSocketAddress(this.host, this.port),
+            server = new TNonblockingServerSocket(new InetSocketAddress(this.host, this.port),
                                        rpc_timeout);
         } catch (TTransportException e) {
             throw new RuntimeException(String.format("Unable to create scribe server socket to %s:%s",
@@ -91,16 +70,14 @@ public final class ScribeServer implements Runnable {
         LOG.info("Using TFastFramedTransport with a max frame size of " + String.valueOf( this.thrift_length) + " bytes");
         
         // ThreadPool Server
-        TThreadPoolServer.Args args = new TThreadPoolServer.Args(server)
-        .minWorkerThreads(min_threads)
-        .maxWorkerThreads(max_threads)
+        THsHaServer.Args args = new THsHaServer.Args(server)
         .inputTransportFactory(inTransportFactory)
         .outputTransportFactory(outTransportFactory)
         .inputProtocolFactory(tProtocolFactory)
         .outputProtocolFactory(tProtocolFactory)
         .processor(processor);
         
-        TThreadPoolServer ttps = new TThreadPoolServer(args);
+        THsHaServer ttps = new THsHaServer(args);
         ttps.serve();
     }
     

@@ -1,26 +1,7 @@
-/**
- * Copyright 2011 Rackspace Hosting Inc.
- *
- * This file is part of Graylog2.
- *
- * Graylog2 is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * Graylog2 is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with Graylog2.  If not, see <http://www.gnu.org/licenses/>.
- *
- */
-
 package org.graylog2.messagehandlers.scribe;
 
 import org.apache.log4j.Logger;
+import org.graylog2.messagequeue.MessageQueue;
 import org.graylog2.messagehandlers.gelf.InvalidGELFCompressionMethodException;
 import org.graylog2.messagehandlers.gelf.SimpleGELFClientHandler;
 import org.graylog2.messagehandlers.syslog.GraylogSyslogServerEvent;
@@ -33,6 +14,7 @@ import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.util.zip.DataFormatException;
 import java.util.List;
+import java.lang.reflect.Field;
 
 import scribe.thrift.scribe.Iface;
 import scribe.thrift.LogEntry;
@@ -52,21 +34,46 @@ public class ScribeHandler implements Iface {
 
     private static final Logger LOG = Logger.getLogger(ScribeHandler.class);
 
+    private final MessageQueue queue = MessageQueue.getInstance();
+    private int maxSize = -1;
+
     public ScribeHandler() {
     }
     
     @Override
     public ResultCode Log(List<LogEntry> messages) throws TException {
         LOG.info("Received " + messages.size() + " messages.");
-                
-        for (LogEntry message : messages) {
-            LOG.trace("received new scribe message: category= " + message.category + " message= " + message.message);
-            try {
-                handleMessage(message.message);
-            } catch (Exception ex) {
-                LOG.error("Failed to process message: category= " + message.category + " message= " + message.message);
-                ex.printStackTrace();
-                throw new RuntimeException("Exception processing event", ex);
+
+        synchronized (queue) {
+            if (maxSize == -1) {
+                // HACK
+                try {
+                    Field field = MessageQueue.class.getDeclaredField("sizeLimit");
+                    field.setAccessible(true);
+                    maxSize = ((Integer)field.get(queue)).intValue();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    throw new RuntimeException(e);
+                }
+
+                LOG.trace("MessageQueue maxSize: " + maxSize);
+
+            } else if (maxSize > 0) {
+                if (queue.getSize() + messages.size() >= maxSize) {
+                    LOG.warn("MessageQueue over capacity, returning TRY_LATER: queueSize=" + queue.getSize() + ", newMessageSize=" + messages.size() + ", maxSize=" + maxSize);
+                    return ResultCode.TRY_LATER;
+                }
+            }
+
+            for (LogEntry message : messages) {
+                LOG.trace("received new scribe message: category= " + message.category + " message= " + message.message);
+                try {
+                    handleMessage(message.message);
+                } catch (Exception ex) {
+                    LOG.error("Failed to process message: category= " + message.category + " message= " + message.message);
+                    ex.printStackTrace();
+                    throw new RuntimeException("Exception processing event", ex);
+                }
             }
         }
         
